@@ -16,6 +16,36 @@ A Go package that wraps the Faktory job processing system. Provides type-safe ha
 go get github.com/patrickward/faktotum
 ```
 
+## Prerequisites
+
+This package requires a running Faktory server. For server installation and management, see [Faktory Installation](https://github.com/contribsys/faktory/wiki/Installation).
+
+### Faktory Server Configuration
+
+The following are some common server configuration options as defined in the [Faktory wiki](https://github.com/contribsys/faktory/wiki), 
+but view the source for the most up-to-date information.
+
+Default server ports:
+
+- `7419`: Main server port for job processing
+- `7420`: Web UI interface
+
+Configure the Faktory server connection using environment variables:
+
+```bash
+# Server connection
+FAKTORY_URL=tcp://localhost:7419      # Server address
+FAKTORY_PROVIDER=FAKTORY_URL          # Alternate env var containing server URL
+FAKTORY_PASSWORD=your-password        # Server password
+```
+
+If you make the web UI available and a password is set, the UI will use Basic Authentication with the FAKTORY_PASSWORD value.
+
+> Only expose the Faktory server and UI to trusted networks.
+> 
+> See the [Faktory Security Guide](https://github.com/contribsys/faktory/wiki/Security) and any [reported vulnerabilities](https://github.com/contribsys/faktory/security) for more information.
+ 
+
 ## Basic Usage
 
 ```go
@@ -223,5 +253,3 @@ func setupNewFactotum(c *mockClient, config *faktotum.Config) *faktotum.Faktotum
     }))
 }
 ```
-
-
