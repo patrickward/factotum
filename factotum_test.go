@@ -3,6 +3,7 @@ package factotum_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -282,4 +283,153 @@ func TestGracefulShutdownTimeout(t *testing.T) {
 	err := module.Stop(ctx)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "shutdown timed out")
+}
+
+func TestBulkEnqueue(t *testing.T) {
+	tests := []struct {
+		name      string
+		jobs      []*faktory.Job
+		setupMock func(*mockClient)
+		verify    func(*testing.T, []factotum.BulkEnqueueResult)
+	}{
+		{
+			name: "successful bulk enqueue",
+			jobs: []*faktory.Job{
+				faktory.NewJob("job1", "arg1"),
+				faktory.NewJob("job2", "arg2"),
+				faktory.NewJob("job3", "arg3"),
+			},
+			setupMock: func(m *mockClient) {
+				m.On("Push", mock.AnythingOfType("*client.Job")).Return(nil).Times(3)
+				m.On("Cleanup").Return().Times(3)
+			},
+			verify: func(t *testing.T, results []factotum.BulkEnqueueResult) {
+				require.Len(t, results, 3)
+				for _, result := range results {
+					assert.NotEmpty(t, result.JobID)
+					assert.NoError(t, result.Error)
+				}
+			},
+		},
+		{
+			name: "partial failures",
+			jobs: []*faktory.Job{
+				faktory.NewJob("job1", "arg1"),
+				faktory.NewJob("job2", "arg2"),
+				faktory.NewJob("job3", "arg3"),
+			},
+			setupMock: func(m *mockClient) {
+				m.On("Push", mock.MatchedBy(func(job *faktory.Job) bool {
+					return job.Type == "job1"
+				})).Return(nil).Once()
+				m.On("Push", mock.MatchedBy(func(job *faktory.Job) bool {
+					return job.Type == "job2"
+				})).Return(errors.New("push error")).Once()
+				m.On("Push", mock.MatchedBy(func(job *faktory.Job) bool {
+					return job.Type == "job3"
+				})).Return(nil).Once()
+				m.On("Cleanup").Return().Times(3)
+			},
+			verify: func(t *testing.T, results []factotum.BulkEnqueueResult) {
+				require.Len(t, results, 3)
+				assert.NoError(t, results[0].Error)
+				assert.Error(t, results[1].Error)
+				assert.NoError(t, results[2].Error)
+			},
+		},
+		{
+			name: "handles client creation failure",
+			jobs: []*faktory.Job{
+				faktory.NewJob("job1", "arg1"),
+			},
+			setupMock: func(m *mockClient) {
+				// We'll create a module with a failing client factory instead
+			},
+			verify: func(t *testing.T, results []factotum.BulkEnqueueResult) {
+				require.Len(t, results, 1)
+				assert.Error(t, results[0].Error)
+				assert.Contains(t, results[0].Error.Error(), "failed to get client")
+			},
+		},
+		{
+			name: "handles panics",
+			jobs: []*faktory.Job{
+				faktory.NewJob("panic", "arg1"),
+			},
+			setupMock: func(m *mockClient) {
+				m.On("Push", mock.AnythingOfType("*client.Job")).Run(func(args mock.Arguments) {
+					panic("test panic")
+				}).Once()
+				m.On("Cleanup").Return().Once()
+			},
+			verify: func(t *testing.T, results []factotum.BulkEnqueueResult) {
+				require.Len(t, results, 1)
+				assert.Error(t, results[0].Error)
+				var panicErr *factotum.PanicError
+				assert.ErrorAs(t, results[0].Error, &panicErr)
+				assert.Contains(t, panicErr.Value, "test panic")
+			},
+		},
+		{
+			name: "respects concurrency limit",
+			jobs: func() []*faktory.Job {
+				jobs := make([]*faktory.Job, 10)
+				for i := range jobs {
+					jobs[i] = faktory.NewJob(fmt.Sprintf("job%d", i), "arg")
+				}
+				return jobs
+			}(),
+			setupMock: func(m *mockClient) {
+				m.On("Push", mock.AnythingOfType("*client.Job")).Run(func(args mock.Arguments) {
+					// Add a small delay to test concurrency
+					time.Sleep(50 * time.Millisecond)
+				}).Return(nil).Times(10)
+				m.On("Cleanup").Return().Times(10)
+			},
+			verify: func(t *testing.T, results []factotum.BulkEnqueueResult) {
+				require.Len(t, results, 10)
+				for _, result := range results {
+					assert.NoError(t, result.Error)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.name == "handles client creation failure" {
+				// Special case: use failing client factory
+				module := factotum.New(&factotum.Config{WorkerCount: 2}, factotum.WithClientFactory(func() (factotum.Client, error) {
+					return nil, errors.New("failed to get client")
+				}))
+				require.NoError(t, module.Init())
+				results := module.BulkEnqueue(context.Background(), tt.jobs)
+				tt.verify(t, results)
+				return
+			}
+
+			mockClient := new(mockClient)
+			tt.setupMock(mockClient)
+
+			module := setupNewFactotum(mockClient, &factotum.Config{
+				WorkerCount: 2, // Small number to test concurrency
+				Queues:      []string{"test"},
+			})
+			require.NoError(t, module.Init())
+
+			start := time.Now()
+			results := module.BulkEnqueue(context.Background(), tt.jobs)
+			duration := time.Since(start)
+
+			tt.verify(t, results)
+			mockClient.AssertExpectations(t)
+
+			// For the concurrency test, verify the duration
+			if tt.name == "respects concurrency limit" {
+				// With 10 jobs, 50ms sleep, and concurrency of 2,
+				// it should take at least 250ms (5 batches * 50ms)
+				assert.GreaterOrEqual(t, duration.Milliseconds(), int64(250))
+			}
+		})
+	}
 }
