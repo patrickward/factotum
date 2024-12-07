@@ -1,4 +1,4 @@
-package factotum
+package faktotum
 
 import faktory "github.com/contribsys/faktory/client"
 

@@ -1,4 +1,4 @@
-module github.com/patrickward/factotum
+module github.com/patrickward/faktotum
 
 go 1.23
 

@@ -1,4 +1,4 @@
-package factotum_test
+package faktotum_test
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 
 	faktory "github.com/contribsys/faktory/client"
 
-	"github.com/patrickward/factotum"
+	"github.com/patrickward/faktotum"
 )
 
 type mockClient struct {
@@ -34,8 +34,8 @@ func (m *mockClient) Cleanup() {
 	m.Called()
 }
 
-func setupNewFactotum(c *mockClient, config *factotum.Config) *factotum.Faktotum {
-	return factotum.New(config, factotum.WithClientFactory(func() (factotum.Client, error) {
+func setupNewFactotum(c *mockClient, config *faktotum.Config) *faktotum.Faktotum {
+	return faktotum.New(config, faktotum.WithClientFactory(func() (faktotum.Client, error) {
 		return c, nil
 	}))
 }
@@ -44,7 +44,7 @@ func setupNewFactotum(c *mockClient, config *factotum.Config) *factotum.Faktotum
 func TestConfig(t *testing.T) {
 	tests := []struct {
 		name      string
-		config    *factotum.Config
+		config    *faktotum.Config
 		expectErr bool
 	}{
 		{
@@ -54,7 +54,7 @@ func TestConfig(t *testing.T) {
 		},
 		{
 			name: "valid custom config",
-			config: &factotum.Config{
+			config: &faktotum.Config{
 				WorkerCount: 10,
 				Queues:      []string{"high", "default", "low"},
 				Labels:      []string{"api", "worker"},
@@ -63,7 +63,7 @@ func TestConfig(t *testing.T) {
 		},
 		{
 			name: "invalid worker count",
-			config: &factotum.Config{
+			config: &faktotum.Config{
 				WorkerCount: -1,
 			},
 			expectErr: true,
@@ -125,14 +125,14 @@ func TestJobRegistration(t *testing.T) {
 			// Create mock client
 			mockClient := new(mockClient)
 			tt.setupMock(mockClient)
-			module := setupNewFactotum(mockClient, &factotum.Config{
+			module := setupNewFactotum(mockClient, &faktotum.Config{
 				WorkerCount: 1,
 				Queues:      []string{"test"},
 			})
 			require.NoError(t, module.Init())
 
 			// Create and register typed handler
-			handler := factotum.NewTypedHandler(func(ctx context.Context, job testJob) error {
+			handler := faktotum.NewTypedHandler(func(ctx context.Context, job testJob) error {
 				if job.Count == 0 {
 					return errors.New("count cannot be zero")
 				}
@@ -161,7 +161,7 @@ func TestJobRegistration(t *testing.T) {
 
 // TestPanicRecovery tests the panic recovery middleware
 func TestPanicRecovery(t *testing.T) {
-	module := setupNewFactotum(nil, &factotum.Config{
+	module := setupNewFactotum(nil, &faktotum.Config{
 		WorkerCount: 1,
 		Queues:      []string{"test"},
 	})
@@ -180,7 +180,7 @@ func TestPanicRecovery(t *testing.T) {
 	err := handler(ctx, "test")
 
 	require.Error(t, err)
-	var panicErr *factotum.PanicError
+	var panicErr *faktotum.PanicError
 	require.ErrorAs(t, err, &panicErr)
 	assert.Contains(t, panicErr.Value, "test panic")
 }
@@ -199,12 +199,13 @@ func TestHookExecution(t *testing.T) {
 		},
 	}
 
-	module := setupNewFactotum(nil, &factotum.Config{
+	module := setupNewFactotum(nil, &faktotum.Config{
 		WorkerCount: 1,
 		Queues:      []string{"test"},
 	})
 	require.NoError(t, module.Init())
-	module.RegisterHook(testHook)
+	err := module.RegisterGlobalHook("test", testHook)
+	require.NoError(t, err)
 
 	// Create a test handler
 	baseHandler := worker.Perform(func(ctx context.Context, args ...interface{}) error {
@@ -217,7 +218,7 @@ func TestHookExecution(t *testing.T) {
 
 	// Execute the wrapped handler
 	ctx := context.Background()
-	err := handler(ctx, "test")
+	err = handler(ctx, "test")
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"before", "execute", "after"}, hookOrder)
@@ -244,7 +245,7 @@ func TestGracefulShutdown(t *testing.T) {
 	//mockClient.On("Push", mock.AnythingOfType("*client.Job")).Return(nil)
 	//mockClient.On("Cleanup").Return()
 
-	module := setupNewFactotum(mockClient, &factotum.Config{
+	module := setupNewFactotum(mockClient, &faktotum.Config{
 		WorkerCount:     1,
 		Queues:          []string{"test"},
 		ShutdownTimeout: time.Millisecond, // Very short for test
@@ -265,7 +266,7 @@ func TestGracefulShutdown(t *testing.T) {
 func TestGracefulShutdownTimeout(t *testing.T) {
 	// Create a mock manager that takes longer than the timeout
 	longDelay := 200 * time.Millisecond
-	module := factotum.New(&factotum.Config{
+	module := faktotum.New(&faktotum.Config{
 		WorkerCount:     1,
 		Queues:          []string{"test"},
 		ShutdownTimeout: 50 * time.Millisecond, // Shorter than the delay
@@ -290,7 +291,7 @@ func TestBulkEnqueue(t *testing.T) {
 		name      string
 		jobs      []*faktory.Job
 		setupMock func(*mockClient)
-		verify    func(*testing.T, []factotum.BulkEnqueueResult)
+		verify    func(*testing.T, []faktotum.BulkEnqueueResult)
 	}{
 		{
 			name: "successful bulk enqueue",
@@ -303,7 +304,7 @@ func TestBulkEnqueue(t *testing.T) {
 				m.On("Push", mock.AnythingOfType("*client.Job")).Return(nil).Times(3)
 				m.On("Cleanup").Return().Times(3)
 			},
-			verify: func(t *testing.T, results []factotum.BulkEnqueueResult) {
+			verify: func(t *testing.T, results []faktotum.BulkEnqueueResult) {
 				require.Len(t, results, 3)
 				for _, result := range results {
 					assert.NotEmpty(t, result.JobID)
@@ -330,7 +331,7 @@ func TestBulkEnqueue(t *testing.T) {
 				})).Return(nil).Once()
 				m.On("Cleanup").Return().Times(3)
 			},
-			verify: func(t *testing.T, results []factotum.BulkEnqueueResult) {
+			verify: func(t *testing.T, results []faktotum.BulkEnqueueResult) {
 				require.Len(t, results, 3)
 				assert.NoError(t, results[0].Error)
 				assert.Error(t, results[1].Error)
@@ -345,7 +346,7 @@ func TestBulkEnqueue(t *testing.T) {
 			setupMock: func(m *mockClient) {
 				// We'll create a module with a failing client factory instead
 			},
-			verify: func(t *testing.T, results []factotum.BulkEnqueueResult) {
+			verify: func(t *testing.T, results []faktotum.BulkEnqueueResult) {
 				require.Len(t, results, 1)
 				assert.Error(t, results[0].Error)
 				assert.Contains(t, results[0].Error.Error(), "failed to get client")
@@ -362,10 +363,10 @@ func TestBulkEnqueue(t *testing.T) {
 				}).Once()
 				m.On("Cleanup").Return().Once()
 			},
-			verify: func(t *testing.T, results []factotum.BulkEnqueueResult) {
+			verify: func(t *testing.T, results []faktotum.BulkEnqueueResult) {
 				require.Len(t, results, 1)
 				assert.Error(t, results[0].Error)
-				var panicErr *factotum.PanicError
+				var panicErr *faktotum.PanicError
 				assert.ErrorAs(t, results[0].Error, &panicErr)
 				assert.Contains(t, panicErr.Value, "test panic")
 			},
@@ -386,7 +387,7 @@ func TestBulkEnqueue(t *testing.T) {
 				}).Return(nil).Times(10)
 				m.On("Cleanup").Return().Times(10)
 			},
-			verify: func(t *testing.T, results []factotum.BulkEnqueueResult) {
+			verify: func(t *testing.T, results []faktotum.BulkEnqueueResult) {
 				require.Len(t, results, 10)
 				for _, result := range results {
 					assert.NoError(t, result.Error)
@@ -399,7 +400,7 @@ func TestBulkEnqueue(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.name == "handles client creation failure" {
 				// Special case: use failing client factory
-				module := factotum.New(&factotum.Config{WorkerCount: 2}, factotum.WithClientFactory(func() (factotum.Client, error) {
+				module := faktotum.New(&faktotum.Config{WorkerCount: 2}, faktotum.WithClientFactory(func() (faktotum.Client, error) {
 					return nil, errors.New("failed to get client")
 				}))
 				require.NoError(t, module.Init())
@@ -411,7 +412,7 @@ func TestBulkEnqueue(t *testing.T) {
 			mockClient := new(mockClient)
 			tt.setupMock(mockClient)
 
-			module := setupNewFactotum(mockClient, &factotum.Config{
+			module := setupNewFactotum(mockClient, &faktotum.Config{
 				WorkerCount: 2, // Small number to test concurrency
 				Queues:      []string{"test"},
 			})

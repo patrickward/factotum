@@ -1,4 +1,4 @@
-package factotum
+package faktotum
 
 import (
 	"context"
@@ -51,7 +51,7 @@ type Faktotum struct {
 	mgr           *worker.Manager
 	pool          *faktory.Pool
 	hasPool       bool
-	hooks         []Hook
+	hookRegistry  *HookRegistry
 	cancel        context.CancelFunc
 	clientFactory ClientFactory
 	mu            sync.RWMutex
@@ -86,9 +86,9 @@ func New(cfg *Config, opts ...Option) *Faktotum {
 	}
 
 	m := &Faktotum{
-		config: cfg,
-		logger: cfg.Logger,
-		hooks:  make([]Hook, 0),
+		config:       cfg,
+		logger:       cfg.Logger,
+		hookRegistry: NewHookRegistry(),
 	}
 
 	for _, opt := range opts {
@@ -163,7 +163,7 @@ func (m *Faktotum) Start(ctx context.Context) error {
 }
 
 // Stop implements ShutdownModule interface and stops the Faktory worker
-func (m *Faktotum) Stop(ctx context.Context) error {
+func (m *Faktotum) Stop(_ context.Context) error {
 	if m.cancel != nil {
 		m.cancel()
 	}
@@ -188,11 +188,34 @@ func (m *Faktotum) Stop(ctx context.Context) error {
 	}
 }
 
-// RegisterHook adds a new hook
-func (m *Faktotum) RegisterHook(hook Hook) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.hooks = append(m.hooks, hook)
+// RegisterGlobalHook adds a new hook
+func (m *Faktotum) RegisterGlobalHook(name string, hook Hook) error {
+	return m.hookRegistry.RegisterGlobalHook(name, hook)
+}
+
+// RegisterJobHook adds a new hook for a specific job type
+func (m *Faktotum) RegisterJobHook(jobType, name string, hook Hook) error {
+	return m.hookRegistry.RegisterJobHook(jobType, name, hook)
+}
+
+// UnregisterGlobalHook removes a global hook
+func (m *Faktotum) UnregisterGlobalHook(name string) error {
+	return m.hookRegistry.UnregisterGlobalHook(name)
+}
+
+// UnregisterJobHook removes a job-specific hook
+func (m *Faktotum) UnregisterJobHook(jobType string, name string) error {
+	return m.hookRegistry.UnregisterJobHook(jobType, name)
+}
+
+// GetGlobalHooks returns all global hooks
+func (m *Faktotum) GetGlobalHooks() map[string]Hook {
+	return m.hookRegistry.GetGlobalHooks()
+}
+
+// GetJobTypeHooks returns all hooks for a specific job type
+func (m *Faktotum) GetJobTypeHooks(jobType string) map[string]Hook {
+	return m.hookRegistry.GetJobTypeHooks(jobType)
 }
 
 // RegisterJob registers a job handler with hooks and panic recovery
@@ -315,10 +338,6 @@ func (m *Faktotum) BulkEnqueue(_ context.Context, jobs []*faktory.Job) []BulkEnq
 	return results
 }
 
-// -----------------------------------------------------------------------------
-// Private functions
-// -----------------------------------------------------------------------------
-
 // WrapWithHooks wraps a job handler with hook processing and logging
 func (m *Faktotum) WrapWithHooks(jobType string, handler worker.Perform) worker.Perform {
 	return func(ctx context.Context, args ...interface{}) error {
@@ -332,15 +351,30 @@ func (m *Faktotum) WrapWithHooks(jobType string, handler worker.Perform) worker.
 			slog.Any("args", args),
 		)
 
+		hooks := m.hookRegistry.GetHooks(jobType)
+
 		// Run pre-job hooks
-		for _, hook := range m.hooks {
-			if err := hook.BeforeJob(ctx, job); err != nil {
-				m.logger.Error("pre-job hook failed",
+		for _, hook := range hooks {
+			if err := func() error {
+				defer func() {
+					if r := recover(); r != nil {
+						stack := debug.Stack()
+						m.logger.Error("panic in BeforeJob hook",
+							slog.String("job_id", job.Jid),
+							slog.String("job_type", job.Type),
+							slog.Any("panic_value", r),
+							slog.String("stack_trace", string(stack)),
+						)
+					}
+				}()
+				return hook.BeforeJob(ctx, job)
+			}(); err != nil {
+				m.logger.Error("BeforeJob hook failed",
 					slog.String("job_id", job.Jid),
 					slog.String("job_type", job.Type),
 					slog.String("error", err.Error()),
 				)
-				return fmt.Errorf("pre-job hook error: %w", err)
+				return fmt.Errorf("hook failed: %w", err)
 			}
 		}
 
@@ -362,8 +396,22 @@ func (m *Faktotum) WrapWithHooks(jobType string, handler worker.Perform) worker.
 		}
 
 		// Run post-job hooks
-		for _, hook := range m.hooks {
-			hook.AfterJob(ctx, job, err)
+		for _, hook := range hooks {
+			//hook.AfterJob(ctx, job, err)
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						stack := debug.Stack()
+						m.logger.Error("panic in AfterJob hook",
+							slog.String("job_id", job.Jid),
+							slog.String("job_type", job.Type),
+							slog.Any("panic_value", r),
+							slog.String("stack_trace", string(stack)),
+						)
+					}
+				}()
+				hook.AfterJob(ctx, job, err)
+			}()
 		}
 
 		return err
