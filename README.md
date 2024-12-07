@@ -9,12 +9,11 @@ A Go package that wraps the Faktory job processing system. Provides type-safe ha
 - Connection pooling for job operations
 - Structured logging with slog
 - Parallel job enqueueing
-- Test helpers and mocks
 
 ## Installation
 
 ```bash
-go get github.com/yourusername/faktotum
+go get github.com/patrickward/faktotum
 ```
 
 ## Basic Usage
@@ -27,7 +26,7 @@ import (
     "log/slog"
     "time"
     
-    "github.com/yourusername/faktotum"
+    "github.com/patrickward/faktotum"
 )
 
 // Define a job payload
