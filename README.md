@@ -1,23 +1,22 @@
-# README.md
-# Factotum
+# Faktotum
 
-Factotum is a Go module that provides a modular, extensible approach to working with [Faktory](https://contribsys.com/faktory/) background job processing. It offers type-safe job definitions, middleware support, and easy integration with existing applications.
+Faktotum is a Go module that provides a robust, type-safe wrapper around [Faktory](https://github.com/contribsys/faktory) job processing system. 
 
 ## Features
 
-- 🔒 Type-safe job definitions and handlers
-- 🔌 Modular design for easy integration
-- 🧰 Middleware support for cross-cutting concerns
-- 📊 Built-in metrics and logging
-- 🔄 Automatic retry handling
-- 📦 Batch job processing
-- ⚡ Efficient connection pooling
-- 🎛️ Configurable worker pools
+- 🔒 Type-safe job handlers using generics
+- 🪝 Extensible hook system for job lifecycle management
+- 📊 Built-in metrics collection
+- 🔄 Graceful shutdown handling
+- 🏊‍♂️ Efficient client connection pooling
+- 📝 Structured logging with `slog`
+- ⚡ Parallel job enqueueing with configurable concurrency
+- 🧪 Comprehensive test coverage with mocking support
 
 ## Installation
 
 ```bash
-go get github.com/yourusername/factotum
+go get github.com/yourusername/faktotum
 ```
 
 ## Quick Start
@@ -27,70 +26,151 @@ package main
 
 import (
     "context"
-    "log"
+    "log/slog"
     "time"
-
-    "github.com/yourusername/factotum"
+    
+    "github.com/yourusername/faktotum"
 )
 
 // Define your job payload
-type EmailPayload struct {
-    To      string   `json:"to"`
-    Subject string   `json:"subject"`
-    Body    string   `json:"body"`
-    CC      []string `json:"cc,omitempty"`
+type EmailJob struct {
+    To      string
+    Subject string
+    Body    string
 }
 
 func main() {
-    // Create and configure the worker module
-    mod := factotum.New(factotum.Config{
-        Concurrency: 10,
-        Queues:     []string{"critical", "default", "bulk"},
-    })
-
-    // Register a typed job handler
-    emailJob, err := mod.RegisterTypedJob("SendEmail", func(ctx context.Context, payload EmailPayload) error {
-        log.Printf("Sending email to %s: %s", payload.To, payload.Subject)
-        // Implement email sending logic
-        return nil
-    })
-    if err != nil {
-        log.Fatal(err)
-    }
-
+    // Create a new Faktotum instance with default configuration
+    f := faktotum.New(faktotum.DefaultConfig())
+    
     // Initialize the module
-    if err := mod.Init(); err != nil {
-        log.Fatal(err)
+    if err := f.Init(); err != nil {
+        panic(err)
     }
-
-    // Start processing jobs
-    if err := mod.Start(context.Background()); err != nil {
-        log.Fatal(err)
+    
+    // Register a typed job handler
+    handler := faktotum.NewTypedHandler(func(ctx context.Context, job EmailJob) error {
+        // Process the email job
+        return sendEmail(job)
+    })
+    
+    f.RegisterJob("send_email", handler.Perform)
+    
+    // Start the worker
+    ctx := context.Background()
+    if err := f.Start(ctx); err != nil {
+        panic(err)
     }
-
-    // Enqueue a job
-    jid, err := emailJob.Enqueue(context.Background(), EmailPayload{
+    
+    // Create and enqueue a job using the job builder
+    job := faktotum.NewJob("send_email", EmailJob{
         To:      "user@example.com",
-        Subject: "Hello!",
-        Body:    "This is a test email",
-    }, factotum.DefaultJobOptions().
-        WithQueue("critical").
-        WithRetry(3))
-
-    if err != nil {
-        log.Printf("Failed to enqueue job: %v", err)
-    } else {
-        log.Printf("Enqueued job with ID: %s", jid)
+        Subject: "Hello",
+        Body:    "World",
+    }).
+        Queue("critical").
+        Retry(3).
+        Schedule(time.Now().Add(1 * time.Hour)).
+        Build()
+    
+    if err := f.EnqueueJob(ctx, job); err != nil {
+        slog.Error("Failed to enqueue job", "error", err)
     }
 }
 ```
 
-## Module Integration
+## Configuration
 
-Factotum implements common module interfaces for easy integration with existing applications:
+Faktotum can be configured using the `Config` struct:
 
 ```go
-// Register with your application's module system
+config := &faktotum.Config{
+    WorkerCount:     20,              // Number of concurrent workers
+    Queues:          []string{"default", "critical"}, // Queues to process
+    QueueWeights:    map[string]int{   // Optional queue weights
+        "default":  1,
+        "critical": 10,
+    },
+    Labels:          []string{"api"},  // Worker labels
+    ServerURL:       "localhost:7419", // Faktory server URL
+    ShutdownTimeout: 30 * time.Second, // Graceful shutdown timeout
+    Logger:          slog.Default(),   // Custom logger
+}
+```
+
+## Job Building
+
+Faktotum provides a fluent job builder interface for creating jobs:
+
+```go
+job := faktotum.NewJob("email", emailPayload).
+    Queue("critical").                    // Set queue name
+    Retry(3).                            // Set retry count
+    Schedule(time.Now().Add(1 * time.Hour)). // Schedule for later
+    ReserveFor(5 * time.Minute).         // Set reservation timeout
+    Backtrace(20).                       // Set backtrace lines count
+    Custom(map[string]interface{}{       // Add custom metadata
+        "customer_id": "12345",
+    }).
+    Build()                              // Create the job
+
+// Enqueue the job
+f.EnqueueJob(ctx, job)
+```
+
+## Hooks
+
+Hooks allow you to execute code before and after job processing:
+
+```go
+type MetricsHook struct {
+    // ... metrics fields
+}
+
+func (h *MetricsHook) BeforeJob(ctx context.Context, job *faktory.Job) error {
+    // Record job start time
+    return nil
+}
+
+func (h *MetricsHook) AfterJob(ctx context.Context, job *faktory.Job, err error) {
+    // Record job completion metrics
+}
+
+// Register the hook
+f.RegisterHook(&MetricsHook{})
+```
+
+## Bulk Job Enqueueing
+
+Faktotum supports efficient parallel job enqueueing:
+
+```go
+jobs := []*faktory.Job{
+    faktotum.NewJob("email", emailJob1).
+        Queue("critical").
+        Retry(3).
+        Build(),
+    faktotum.NewJob("email", emailJob2).
+        Queue("default").
+        Build(),
+    // ... more jobs
+}
+
+results := f.BulkEnqueue(ctx, jobs)
+for _, result := range results {
+    if result.Error != nil {
+        slog.Error("Job enqueue failed", 
+            "job_id", result.JobID,
+            "error", result.Error)
+    }
+}
+```
+
+## Integration with Module Systems
+
+Faktotum implements common module interfaces for easy integration:
+
+```go
 type Module interface {
     ID() string
     Init() error
@@ -107,68 +187,29 @@ type ShutdownModule interface {
 }
 ```
 
-## Middleware Support
-
-Add cross-cutting concerns with middleware:
+This makes it easy to use Faktotum with modular applications:
 
 ```go
-// Add logging middleware
-mod.RegisterHook(factotum.NewLoggingHook(log.Default()))
-
-// Add metrics collection
-metrics := factotum.NewMetricsHook()
-mod.RegisterHook(metrics)
-
-// Add retry handling
-mod.RegisterHook(factotum.NewRetryHook(5))
+app.RegisterModule(faktotum.New(config))
 ```
 
-## Configuration
+## Testing
 
-Customize worker behavior with the Config struct:
-
-```go
-config := factotum.Config{
-    Concurrency:     20,              // Number of concurrent workers
-    Queues:         []string{"default", "critical"},  // Queue priority order
-    ShutdownTimeout: 30 * time.Second, // Graceful shutdown period
-    PoolSize:       10,               // Connection pool size
-    Labels:         []string{"app:myapp"}, // Worker labels
-}
-```
-
-## Job Options
-
-Control job execution with options:
+Faktotum provides mocking support for testing:
 
 ```go
-opts := factotum.DefaultJobOptions().
-    WithQueue("critical").           // Set queue
-    WithPriority(9).                // Set priority (0-9)
-    WithRetry(3).                   // Set retry count
-    WithSchedule(time.Now().Add(5 * time.Minute)). // Delay execution
-    WithLabels([]string{"customer:premium"})        // Add labels
-```
+// Create a mock client
+mockClient := &MockClient{}
+mockClient.On("Push", mock.AnythingOfType("*client.Job")).Return(nil)
 
-## Batch Processing
-
-Efficiently process multiple jobs:
-
-```go
-jobs := []EmailPayload{
-    {To: "user1@example.com", Subject: "Hello 1"},
-    {To: "user2@example.com", Subject: "Hello 2"},
-}
-
-jids, err := emailJob.EnqueueBatch(ctx, jobs, factotum.DefaultJobOptions().
-    WithQueue("bulk"))
+// Create Faktotum with mock client
+f := faktotum.New(config,
+    faktotum.WithClientFactory(func() (faktotum.Client, error) {
+        return mockClient, nil
+    }),
+)
 ```
 
 ## Contributing
 
-Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
+Contributions are welcome! Please feel free to submit a Pull Request.

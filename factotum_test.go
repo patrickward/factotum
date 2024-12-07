@@ -34,7 +34,7 @@ func (m *mockClient) Cleanup() {
 	m.Called()
 }
 
-func setupNewFactotum(c *mockClient, config *factotum.Config) *factotum.FaktoryModule {
+func setupNewFactotum(c *mockClient, config *factotum.Config) *factotum.Faktotum {
 	return factotum.New(config, factotum.WithClientFactory(func() (factotum.Client, error) {
 		return c, nil
 	}))

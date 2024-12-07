@@ -41,11 +41,11 @@ func DefaultConfig() *Config {
 	}
 }
 
-// Option represents a functional option for configuring the FaktoryModule
-type Option func(module *FaktoryModule)
+// Option represents a functional option for configuring the Faktotum
+type Option func(module *Faktotum)
 
-// FaktoryModule implements the Module interfaces for Faktory worker integration
-type FaktoryModule struct {
+// Faktotum implements the Module interfaces for Faktory worker integration
+type Faktotum struct {
 	config        *Config
 	logger        *slog.Logger
 	mgr           *worker.Manager
@@ -70,13 +70,13 @@ func (e *PanicError) Error() string {
 
 // WithClientFactory allows injection of a custom client creation function
 func WithClientFactory(factory ClientFactory) Option {
-	return func(m *FaktoryModule) {
+	return func(m *Faktotum) {
 		m.clientFactory = factory
 	}
 }
 
-// New creates a new FaktoryModule with the given configuration
-func New(cfg *Config, opts ...Option) *FaktoryModule {
+// New creates a new Faktotum with the given configuration
+func New(cfg *Config, opts ...Option) *Faktotum {
 	if cfg == nil {
 		cfg = DefaultConfig()
 	}
@@ -85,7 +85,7 @@ func New(cfg *Config, opts ...Option) *FaktoryModule {
 		cfg.Logger = slog.Default()
 	}
 
-	m := &FaktoryModule{
+	m := &Faktotum{
 		config: cfg,
 		logger: cfg.Logger,
 		hooks:  make([]Hook, 0),
@@ -99,12 +99,12 @@ func New(cfg *Config, opts ...Option) *FaktoryModule {
 }
 
 // ID implements Module interface
-func (m *FaktoryModule) ID() string {
-	return "faktory-worker"
+func (m *Faktotum) ID() string {
+	return "factotum"
 }
 
 // Init implements Module interface
-func (m *FaktoryModule) Init() error {
+func (m *Faktotum) Init() error {
 	// Create the manager
 	mgr := worker.NewManager()
 
@@ -148,7 +148,7 @@ func (m *FaktoryModule) Init() error {
 }
 
 // Start implements StartupModule interface and starts the Faktory worker
-func (m *FaktoryModule) Start(ctx context.Context) error {
+func (m *Faktotum) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	m.cancel = cancel
 
@@ -163,7 +163,7 @@ func (m *FaktoryModule) Start(ctx context.Context) error {
 }
 
 // Stop implements ShutdownModule interface and stops the Faktory worker
-func (m *FaktoryModule) Stop(ctx context.Context) error {
+func (m *Faktotum) Stop(ctx context.Context) error {
 	if m.cancel != nil {
 		m.cancel()
 	}
@@ -189,14 +189,14 @@ func (m *FaktoryModule) Stop(ctx context.Context) error {
 }
 
 // RegisterHook adds a new hook
-func (m *FaktoryModule) RegisterHook(hook Hook) {
+func (m *Faktotum) RegisterHook(hook Hook) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.hooks = append(m.hooks, hook)
 }
 
 // RegisterJob registers a job handler with hooks and panic recovery
-func (m *FaktoryModule) RegisterJob(jobType string, handler worker.Perform) {
+func (m *Faktotum) RegisterJob(jobType string, handler worker.Perform) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -215,7 +215,7 @@ func (m *FaktoryModule) RegisterJob(jobType string, handler worker.Perform) {
 }
 
 // EnqueueJob pushes a job to Faktory
-func (m *FaktoryModule) EnqueueJob(_ context.Context, job *faktory.Job) error {
+func (m *Faktotum) EnqueueJob(_ context.Context, job *faktory.Job) error {
 	client, err := m.clientFactory()
 	if err != nil {
 		return fmt.Errorf("failed to get client from pool: %w", err)
@@ -236,7 +236,7 @@ type BulkEnqueueResult struct {
 }
 
 // BulkEnqueue enqueues multiple jobs in parallel
-func (m *FaktoryModule) BulkEnqueue(_ context.Context, jobs []*faktory.Job) []BulkEnqueueResult {
+func (m *Faktotum) BulkEnqueue(_ context.Context, jobs []*faktory.Job) []BulkEnqueueResult {
 	results := make([]BulkEnqueueResult, len(jobs))
 	var wg sync.WaitGroup
 	semaphore := make(chan struct{}, m.config.WorkerCount)
@@ -320,7 +320,7 @@ func (m *FaktoryModule) BulkEnqueue(_ context.Context, jobs []*faktory.Job) []Bu
 // -----------------------------------------------------------------------------
 
 // WrapWithHooks wraps a job handler with hook processing and logging
-func (m *FaktoryModule) WrapWithHooks(jobType string, handler worker.Perform) worker.Perform {
+func (m *Faktotum) WrapWithHooks(jobType string, handler worker.Perform) worker.Perform {
 	return func(ctx context.Context, args ...interface{}) error {
 		// Create a job instance for hooks and logging
 		job := faktory.NewJob(jobType, args...)
@@ -371,7 +371,7 @@ func (m *FaktoryModule) WrapWithHooks(jobType string, handler worker.Perform) wo
 }
 
 // WrapWithPanicRecovery wraps a job handler with panic recovery
-func (m *FaktoryModule) WrapWithPanicRecovery(jobType string, handler worker.Perform) worker.Perform {
+func (m *Faktotum) WrapWithPanicRecovery(jobType string, handler worker.Perform) worker.Perform {
 	return func(ctx context.Context, args ...interface{}) (err error) {
 		defer func() {
 			if r := recover(); r != nil {
