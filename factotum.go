@@ -24,12 +24,8 @@ type Config struct {
 	QueueWeights map[string]int
 	// Labels to attach to this worker pool
 	Labels []string
-	// ServerURL is the Faktory server URL (optional)
-	ServerURL string
 	// ShutdownTimeout is how long to wait for jobs to finish during shutdown
 	ShutdownTimeout time.Duration
-	// Password for Faktory server (optional)
-	Password string
 }
 
 // DefaultConfig returns a default configuration

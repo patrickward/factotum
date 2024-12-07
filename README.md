@@ -30,6 +30,7 @@ import (
 )
 
 // Define a job payload
+
 type EmailJob struct {
     To      string
     Subject string
@@ -77,14 +78,13 @@ func main() {
 
 ```go
 config := &faktotum.Config{
-    WorkerCount:     20,                            // Concurrent workers
+    WorkerCount:     5,                             // Concurrent workers
     Queues:          []string{"default", "high"},   // Queues to process
     QueueWeights:    map[string]int{                // Optional weights
         "default": 1,
         "high":    10,
     },
     Labels:          []string{"api"},
-    ServerURL:       "localhost:7419",
     ShutdownTimeout: 30 * time.Second,
     Logger:          slog.Default(),
 }
@@ -159,6 +159,12 @@ for _, result := range results {
 
 ## Module System Integration
 
+Why does it require ID(), Init(), Start(), and Stop() methods?
+
+This package is designed to be used with my web application framework, which uses a modular 
+approach to registering and managing the lifecycle of components/services. However, it can be used
+independently of the framework.
+
 Faktotum implements these interfaces:
 
 ```go
@@ -178,26 +184,44 @@ type ShutdownModule interface {
 }
 ```
 
-Usage with a module system:
+An example usage with a module system:
 
 ```go
 app.RegisterModule(faktotum.New(config))
 ```
 
+The module system would call the appropriate methods when the application starts and stops.
+
 ## Testing
 
-Mock the client for testing:
+You can mock the client factory to test Faktotum without connecting to a Faktory server. 
+
+The following example uses the `github.com/stretchr/testify/mock` package:
 
 ```go
 // Create mock client
-mockClient := &MockClient{}
-mockClient.On("Push", mock.AnythingOfType("*client.Job")).Return(nil)
+type mockClient struct {
+    mock.Mock
+}
 
-// Use mock client in Faktotum
-f := faktotum.New(config,
-    faktotum.WithClientFactory(func() (faktotum.Client, error) {
-        return mockClient, nil
-    }),
-)
+func (m *mockClient) Push(job *faktory.Job) error {
+    args := m.Called(job)
+    return args.Error(0)
+}
+
+func (m *mockClient) Close() {
+    m.Called()
+}
+
+func (m *mockClient) Cleanup() {
+    m.Called()
+}
+
+func setupNewFactotum(c *mockClient, config *faktotum.Config) *faktotum.Faktotum {
+    return faktotum.New(config, faktotum.WithClientFactory(func() (faktotum.Client, error) {
+        return c, nil
+    }))
+}
 ```
+
 
