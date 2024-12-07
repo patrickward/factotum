@@ -6,40 +6,56 @@ import (
 	faktory "github.com/contribsys/faktory/client"
 )
 
-// JobOption configures a job
-type JobOption func(*faktory.Job)
+// JobBuilder provides a fluent interface for building Faktory jobs
+type JobBuilder struct {
+	job *faktory.Job
+}
 
-// WithQueue sets the job queue
-func WithQueue(queue string) JobOption {
-	return func(j *faktory.Job) {
-		j.Queue = queue
+// NewJob creates a new JobBuilder with the given job type and arguments
+func NewJob(jobType string, args ...interface{}) *JobBuilder {
+	return &JobBuilder{
+		job: faktory.NewJob(jobType, args...),
 	}
 }
 
-// WithRetry sets the retry count
-func WithRetry(retry int) JobOption {
-	return func(j *faktory.Job) {
-		j.Retry = &retry
-	}
+// Queue sets the job queue
+func (b *JobBuilder) Queue(queue string) *JobBuilder {
+	b.job.Queue = queue
+	return b
 }
 
-// WithSchedule schedules the job for future execution
-func WithSchedule(at time.Time) JobOption {
-	return func(j *faktory.Job) {
-		j.At = at.Format(time.RFC3339)
-	}
+// Retry sets the number of times to retry the job
+// Use 0 for no retries, -1 for infinite retries
+func (b *JobBuilder) Retry(count int) *JobBuilder {
+	b.job.Retry = &count
+	return b
 }
 
-// WithCustom adds custom data to the job
-func WithCustom(custom map[string]interface{}) JobOption {
-	return func(j *faktory.Job) {
-		j.Custom = custom
-	}
+// Schedule sets when the job should be executed
+func (b *JobBuilder) Schedule(at time.Time) *JobBuilder {
+	b.job.At = at.Format(time.RFC3339)
+	return b
 }
 
-// WithReserveFor sets the job reservation time
-func WithReserveFor(duration time.Duration) JobOption {
-	return func(j *faktory.Job) {
-		j.ReserveFor = int(duration.Seconds())
-	}
+// ReserveFor sets how long the job should be reserved for (in seconds)
+func (b *JobBuilder) ReserveFor(duration time.Duration) *JobBuilder {
+	b.job.ReserveFor = int(duration.Seconds())
+	return b
+}
+
+// Custom sets custom metadata for the job
+func (b *JobBuilder) Custom(data map[string]interface{}) *JobBuilder {
+	b.job.Custom = data
+	return b
+}
+
+// Backtrace sets the number of backtrace lines to retain on errors
+func (b *JobBuilder) Backtrace(lines int) *JobBuilder {
+	b.job.Backtrace = lines
+	return b
+}
+
+// Build returns the configured Faktory job
+func (b *JobBuilder) Build() *faktory.Job {
+	return b.job
 }
