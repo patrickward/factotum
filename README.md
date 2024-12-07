@@ -39,6 +39,20 @@ FAKTORY_PROVIDER=FAKTORY_URL          # Alternate env var containing server URL
 FAKTORY_PASSWORD=your-password        # Server password
 ```
 
+The CLI can also accept these options:
+
+```bash
+Faktory 1.8.0                                                                                                                       │
+Copyright © 2024 Contributed Systems LLC                                                                                            │
+Licensed under the GNU Affero Public License 3.0                                                                                    │
+-b [binding]    Network binding (use :7419 to listen on all interfaces), default: localhost:7419                                    │
+-w [binding]    Web UI binding (use :7420 to listen on all interfaces), default: localhost:7420                                     │
+-e [env]        Set environment (development, staging, production), default: development                                            │
+-l [level]      Set logging level (error, warn, info, debug), default: info                                                         │
+-v              Show version and license information                                                                                │
+-h              This help screen
+````
+
 If you make the web UI available and a password is set, the UI will use Basic Authentication with the FAKTORY_PASSWORD value.
 
 > Only expose the Faktory server and UI to trusted networks.

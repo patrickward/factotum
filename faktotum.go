@@ -20,7 +20,8 @@ type Config struct {
 	WorkerCount int
 	// Queues are the queues to process, in order of precedence
 	Queues []string
-	// QueueWeights maps queue names to their weights (optional)
+	// QueueWeights maps queue names to their weights (optional). If provided, the worker will process queues in weighted order.
+	// If not provided, the worker will process queues in strict order.
 	QueueWeights map[string]int
 	// Labels to attach to this worker pool
 	Labels []string
@@ -103,6 +104,7 @@ func (m *Faktotum) ID() string {
 func (m *Faktotum) Init() error {
 	// Create the manager
 	mgr := worker.NewManager()
+	mgr.Logger = NewFaktoryLogger(m.logger)
 
 	if m.config.WorkerCount < 1 {
 		return fmt.Errorf("worker count must be at least 1")
