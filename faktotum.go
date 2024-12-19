@@ -160,31 +160,29 @@ func (m *Faktotum) Start(ctx context.Context) error {
 }
 
 // Stop implements ShutdownModule interface and stops the Faktory worker
-func (m *Faktotum) Stop(ctx context.Context) error {
+func (m *Faktotum) Stop(_ context.Context) error {
 	m.mu.Lock()
 	if m.cancel != nil {
 		m.cancel()
-		m.cancel = nil
+		m.cancel = nil // Prevent multiple cancel calls
 	}
-	mgr := m.mgr
+	mgr := m.mgr // Capture under lock
+	hasPool := m.hasPool
 	m.mu.Unlock()
 
 	if mgr == nil {
 		return nil
 	}
 
-	// Set up a channel to track termination completion
 	done := make(chan struct{})
 
-	// Run Terminate in a goroutine since it blocks
 	go func() {
-		defer close(done)
-		if m.hasPool {
+		if hasPool {
 			mgr.Terminate(false)
 		}
+		close(done)
 	}()
 
-	// Wait for either termination to complete or timeout
 	select {
 	case <-done:
 		return nil
