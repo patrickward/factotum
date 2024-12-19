@@ -128,9 +128,9 @@ config := &faktotum.Config{
         "default": 1,
         "high":    10,
     },
-    Labels:          []string{"api"},
-    ShutdownTimeout: 30 * time.Second,
-    Logger:          slog.Default(),
+    Labels:          []string{"api"},               // Optional worker labels
+    ShutdownTimeout: 30 * time.Second,              // Shutdown timeout
+    Logger:          slog.Default(),                // Logger
 }
 ```
 
@@ -180,26 +180,6 @@ f.RegisterJobHook("email", "metrics", &MetricsHook{})
 Hooks execute in this order:
 1. Global hooks in registration order
 2. Job-specific hooks in registration order
-
-## Bulk Job Enqueueing
-
-Enqueue multiple jobs in parallel:
-
-```go
-jobs := []*faktory.Job{
-    faktotum.NewJob("email", email1).Queue("high").Build(),
-    faktotum.NewJob("email", email2).Queue("low").Build(),
-}
-
-results := f.BulkEnqueue(ctx, jobs)
-for _, result := range results {
-    if result.Error != nil {
-        slog.Error("Job enqueue failed", 
-            "job_id", result.JobID,
-            "error", result.Error)
-    }
-}
-```
 
 ## Module System Integration
 
@@ -267,3 +247,29 @@ func setupNewFactotum(c *mockClient, config *faktotum.Config) *faktotum.Faktotum
     }))
 }
 ```
+
+## Job Scheduling
+
+Faktotum includes optional job scheduling capabilities built on [go-co-op/gocron](https://github.com/go-co-op/gocron). Enable scheduling when creating your Faktotum instance:
+
+```go
+f := faktotum.New(
+    faktotumConfig,
+    faktotum.WithScheduler(&faktotum.SchedulerConfig{
+        Name:     "app-scheduler",
+        Location: time.UTC,
+    }),
+)
+
+// Use the scheduler if enabled
+if scheduler := f.Scheduler(); scheduler != nil {
+    err := scheduler.ScheduleDaily(
+        "cleanup-job",
+        faktory.NewJob("cleanup", nil),
+        1,
+        gocron.NewAtTimes(gocron.NewAtTime(3, 0, 0)),
+    )
+}
+```
+
+See [SCHEDULER.md](SCHEDULER.md) for detailed documentation on scheduling patterns and options.
