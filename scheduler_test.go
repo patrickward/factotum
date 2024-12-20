@@ -223,7 +223,9 @@ func TestScheduling(t *testing.T) {
 
 			err = scheduler.Start(context.Background())
 			require.NoError(t, err)
-			defer scheduler.Stop(context.Background())
+			defer func(scheduler *faktotum.Scheduler, ctx context.Context) {
+				_ = scheduler.Stop(ctx)
+			}(scheduler, context.Background())
 
 			err = tt.setup(scheduler)
 			if tt.expectErr {
@@ -282,7 +284,9 @@ func TestUnschedule(t *testing.T) {
 
 			err = scheduler.Start(context.Background())
 			require.NoError(t, err)
-			defer scheduler.Stop(context.Background())
+			defer func(scheduler *faktotum.Scheduler, ctx context.Context) {
+				_ = scheduler.Stop(ctx)
+			}(scheduler, context.Background())
 
 			err = tt.setupJobs(scheduler)
 			require.NoError(t, err)
