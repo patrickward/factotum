@@ -2,6 +2,9 @@
 
 A Go package that wraps the Faktory job processing system. Provides type-safe handlers, hook support, and integrates with modular Go applications.
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/patrickward/faktotum.svg)](https://pkg.go.dev/github.com/patrickward/faktotum)
+[![Go Report Card](https://goreportcard.com/badge/github.com/patrickward/faktotum)](https://goreportcard.com/report/github.com/patrickward/faktotum)
+
 ## Features
 
 - Type-safe job handlers using Go generics
