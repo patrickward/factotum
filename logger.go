@@ -85,3 +85,33 @@ func (l *FaktoryLogger) Fatal(v ...interface{}) {
 func (l *FaktoryLogger) Fatalf(format string, args ...interface{}) {
 	l.logger.Error(l.prefix+fmt.Sprintf(format, args...), slog.String("level", "fatal"))
 }
+
+// Common attribute keys for consistency
+const (
+	AttrJobID      = "job_id"
+	AttrJobType    = "job_type"
+	AttrError      = "error"
+	AttrQueueName  = "queue"
+	AttrRetryCount = "retry_count"
+)
+
+func jobInfo(jobID, jobType string, attrs ...any) []any {
+	return append([]any{
+		slog.String(AttrJobID, jobID),
+		slog.String(AttrJobType, jobType),
+	}, attrs...)
+}
+
+func jobError(jobID, jobType string, err error, attrs ...any) []any {
+	return append([]any{
+		slog.String(AttrJobID, jobID),
+		slog.String(AttrJobType, jobType),
+		slog.String(AttrError, err.Error()),
+	}, attrs...)
+}
+
+func systemError(err error, attrs ...any) []any {
+	return append([]any{
+		slog.String(AttrError, err.Error()),
+	}, attrs...)
+}

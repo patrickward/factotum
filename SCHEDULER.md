@@ -80,7 +80,7 @@ The `Schedule` method provides the most flexible scheduling using cron expressio
 ```go
 scheduler.Schedule(faktotum.ScheduleOptions{
     Name: "backup-db",
-    Job: faktory.NewJob("backup.database", nil),
+    Job: faktotum.NewJob("backup.database", nil).Build(),
     Schedule: "0 0 * * *",      // Daily at midnight
     WithSeconds: false,         // Don't use seconds field
     JobOptions: []gocron.JobOption{
@@ -92,7 +92,7 @@ scheduler.Schedule(faktotum.ScheduleOptions{
 // With seconds precision
 scheduler.Schedule(faktotum.ScheduleOptions{
     Name: "health-check",
-    Job: faktory.NewJob("monitor.health", nil),
+    Job: faktotum.NewJob("monitor.health", nil).Build(),
     Schedule: "*/30 * * * * *", // Every 30 seconds
     WithSeconds: true,          // Use seconds field
     JobOptions: []gocron.JobOption{
@@ -109,7 +109,7 @@ The `ScheduleEvery` method provides simple interval-based scheduling:
 // Every 5 minutes
 scheduler.ScheduleEvery(
     "process-queue",
-    faktory.NewJob("queue.process", nil),
+    faktotum.NewJob("queue.process", nil).Build(),
     5*time.Minute,
     gocron.WithSingletonMode(true),
     gocron.WithTags("queue", "processing"),
@@ -118,7 +118,7 @@ scheduler.ScheduleEvery(
 // Every hour
 scheduler.ScheduleEvery(
     "hourly-task",
-    faktory.NewJob("task.hourly", nil),
+    faktotum.NewJob("task.hourly", nil).Build(),
     time.Hour,
     gocron.WithStartAt(time.Now().Add(time.Minute)),
 )
@@ -136,7 +136,7 @@ The `ScheduleDaily` method schedules jobs to run at specific times. The interval
 // Every day at 9 AM and 5 PM
 scheduler.ScheduleDaily(
     "daily-report",
-    faktory.NewJob("reports.generate", nil),
+    faktotum.NewJob("reports.generate", nil).Build(),
     1, // run every day
     gocron.NewAtTimes(
         gocron.NewAtTime(9, 0, 0),  // 9 AM
@@ -149,7 +149,7 @@ scheduler.ScheduleDaily(
 // Every other day at 3 AM
 scheduler.ScheduleDaily(
     "bi-daily-cleanup",
-    faktory.NewJob("cleanup", nil),
+    faktotum.NewJob("cleanup", nil).Build(),
     2, // run every 2 days
     gocron.NewAtTimes(
         gocron.NewAtTime(3, 0, 0),
@@ -170,7 +170,7 @@ The `ScheduleWeekly` method schedules jobs to run on specific days of the week. 
 // Every week on Saturday and Sunday at 1 AM
 scheduler.ScheduleWeekly(
     "weekly-cleanup",
-    faktory.NewJob("maintenance.cleanup", nil),
+    faktotum.NewJob("maintenance.cleanup", nil).Build(),
     1, // run every week
     gocron.NewWeekdays(time.Saturday, time.Sunday),
     gocron.NewAtTimes(gocron.NewAtTime(1, 0, 0)),
@@ -180,7 +180,7 @@ scheduler.ScheduleWeekly(
 // Every other week on Monday at 9 AM
 scheduler.ScheduleWeekly(
     "bi-weekly-report",
-    faktory.NewJob("reports.generate", nil),
+    faktotum.NewJob("reports.generate", nil).Build(),
     2, // run every 2 weeks
     gocron.NewWeekdays(time.Monday),
     gocron.NewAtTimes(gocron.NewAtTime(9, 0, 0)),
@@ -202,7 +202,7 @@ Days can be specified as 1-31 or negative numbers (-1 to -31) counting from the 
 // Every month on the 1st and 15th at midnight
 scheduler.ScheduleMonthly(
     "monthly-billing",
-    faktory.NewJob("billing.process", nil),
+    faktotum.NewJob("billing.process", nil).Build(),
     1, // run every month
     gocron.NewDaysOfTheMonth(1, 15), // 1st and 15th
     gocron.NewAtTimes(gocron.NewAtTime(0, 0, 0)),
@@ -212,7 +212,7 @@ scheduler.ScheduleMonthly(
 // Every quarter (3 months) on the first at 9 AM
 scheduler.ScheduleMonthly(
     "quarterly-report",
-    faktory.NewJob("reports.quarterly", nil),
+    faktotum.NewJob("reports.quarterly", nil).Build(),
     3, // run every 3 months
     gocron.NewDaysOfTheMonth(1),    // First of the month
     gocron.NewAtTimes(gocron.NewAtTime(9, 0, 0)),
@@ -222,7 +222,7 @@ scheduler.ScheduleMonthly(
 // Last day of every month at 11 PM
 scheduler.ScheduleMonthly(
     "end-of-month",
-    faktory.NewJob("month.close", nil),
+    faktotum.NewJob("month.close", nil).Build(),
     1, // run every month
     gocron.NewDaysOfTheMonth(-1),   // Last day of month
     gocron.NewAtTimes(gocron.NewAtTime(23, 0, 0)),
@@ -252,7 +252,7 @@ gocron.WithTags("billing", "critical")
 ```go
 scheduler.Schedule(faktotum.ScheduleOptions{
     Name: "important-task",
-    Job: faktory.NewJob("task.important", nil),
+    Job: faktotum.NewJob("task.important", nil).Build(),
     Schedule: "*/5 * * * *",
     JobOptions: []gocron.JobOption{
         gocron.WithStartAt(time.Now().Add(time.Hour)),
@@ -346,10 +346,10 @@ f.RegisterJob("cleanup.data", handler.Perform)
 // Schedule with type-safe parameters
 scheduler.Schedule(faktotum.ScheduleOptions{
     Name: "typed-cleanup",
-    Job: faktory.NewJob("cleanup.data", CleanupJob{
+    Job: faktotum.NewJob("cleanup.data", CleanupJob{
         OlderThan: 24 * time.Hour,
         Type:      "temp-files",
-    }),
+    }).Build(),
     Schedule: "0 0 * * *",
 })
 ```
@@ -377,7 +377,7 @@ func (s *CleanupService) Init() error {
 
     return scheduler.ScheduleDaily(
         "daily-cleanup",
-        faktory.NewJob("cleanup.data", nil),
+        faktotum.NewJob("cleanup.data", nil).Build(),
         1,
         gocron.NewAtTimes(gocron.NewAtTime(3, 0, 0)),
     )

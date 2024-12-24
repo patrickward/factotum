@@ -51,7 +51,9 @@ type Faktotum struct {
 	hookRegistry  *HookRegistry
 	cancel        context.CancelFunc
 	clientFactory ClientFactory
+	scheduler     *Scheduler
 	mu            sync.RWMutex
+	schedulerMu   sync.RWMutex
 }
 
 // PanicError is returned when a panic occurs during job execution
@@ -67,8 +69,23 @@ func (e *PanicError) Error() string {
 
 // WithClientFactory allows injection of a custom client creation function
 func WithClientFactory(factory ClientFactory) Option {
-	return func(m *Faktotum) {
-		m.clientFactory = factory
+	return func(f *Faktotum) {
+		f.clientFactory = factory
+	}
+}
+
+// WithScheduler adds a scheduler to the Faktotum
+func WithScheduler(config SchedulerConfig) Option {
+	return func(f *Faktotum) {
+		f.schedulerMu.Lock()
+		defer f.schedulerMu.Unlock()
+
+		scheduler, err := NewScheduler(f, &config)
+		if err != nil {
+			f.logger.Info("failed to create scheduler", systemError(err)...)
+			return
+		}
+		f.scheduler = scheduler
 	}
 }
 
@@ -84,7 +101,7 @@ func New(cfg *Config, opts ...Option) *Faktotum {
 
 	m := &Faktotum{
 		config:       cfg,
-		logger:       cfg.Logger,
+		logger:       cfg.Logger.WithGroup("faktotum"),
 		hookRegistry: NewHookRegistry(),
 	}
 
@@ -96,37 +113,57 @@ func New(cfg *Config, opts ...Option) *Faktotum {
 }
 
 // ID implements Module interface
-func (m *Faktotum) ID() string {
+func (f *Faktotum) ID() string {
 	return "factotum"
 }
 
+// Scheduler returns the scheduler, if one is configured. If no scheduler is configured, this will return nil.
+//
+// This method is safe for concurrent access.
+//
+// The scheduler is not started automatically. It must be started by the caller and added via the WithScheduler option.
+//
+// If no scheduler is configured, this will return nil. The caller should check for nil before using the scheduler.
+//
+// Example:
+//
+//	if s := m.Scheduler(); s != nil {
+//		s.ScheduleDaily("my-job", "0 0 * * *", myJobHandler)
+//	}
+func (f *Faktotum) Scheduler() *Scheduler {
+	f.schedulerMu.RLock()
+	defer f.schedulerMu.RUnlock()
+
+	return f.scheduler
+}
+
 // Init implements Module interface
-func (m *Faktotum) Init() error {
+func (f *Faktotum) Init() error {
 	// Create the manager
 	mgr := worker.NewManager()
-	mgr.Logger = NewFaktoryLogger(m.logger)
+	mgr.Logger = NewFaktoryLogger(f.logger)
 
-	if m.config.WorkerCount < 1 {
+	if f.config.WorkerCount < 1 {
 		return fmt.Errorf("worker count must be at least 1")
 	}
 
 	// Configure the manager
-	mgr.Concurrency = m.config.WorkerCount
-	if len(m.config.Labels) > 0 {
-		mgr.Labels = m.config.Labels
+	mgr.Concurrency = f.config.WorkerCount
+	if len(f.config.Labels) > 0 {
+		mgr.Labels = f.config.Labels
 	}
-	mgr.ShutdownTimeout = m.config.ShutdownTimeout
+	mgr.ShutdownTimeout = f.config.ShutdownTimeout
 
 	// Set up queue processing
-	if len(m.config.QueueWeights) > 0 {
-		mgr.ProcessWeightedPriorityQueues(m.config.QueueWeights)
+	if len(f.config.QueueWeights) > 0 {
+		mgr.ProcessWeightedPriorityQueues(f.config.QueueWeights)
 	} else {
-		mgr.ProcessStrictPriorityQueues(m.config.Queues...)
+		mgr.ProcessStrictPriorityQueues(f.config.Queues...)
 	}
 
 	// Create the client pool, if not using a custom factory
-	if m.clientFactory == nil {
-		poolSize := m.config.WorkerCount
+	if f.clientFactory == nil {
+		poolSize := f.config.WorkerCount
 		if poolSize < 1 {
 			poolSize = 1
 		}
@@ -136,39 +173,55 @@ func (m *Faktotum) Init() error {
 			return fmt.Errorf("failed to create client pool: %w", err)
 		}
 
-		m.pool = pool
-		m.hasPool = true
-		m.clientFactory = defaultClientFactory(pool)
+		f.pool = pool
+		f.hasPool = true
+		f.clientFactory = defaultClientFactory(pool)
 	}
 
-	m.mgr = mgr
+	f.mgr = mgr
 	return nil
 }
 
 // Start implements StartupModule interface and starts the Faktory worker
-func (m *Faktotum) Start(ctx context.Context) error {
+func (f *Faktotum) Start(ctx context.Context) error {
 	// Start the manager in a goroutine
 	go func() {
-		if err := m.mgr.RunWithContext(ctx); err != nil {
-			m.logger.Error("Faktory worker error",
-				slog.String("error", err.Error()),
-			)
+		if err := f.mgr.RunWithContext(ctx); err != nil {
+			f.logger.Error("faktory worker error", systemError(err)...)
 		}
 	}()
+
+	// If a scheduler is configured, start it
+	if f.scheduler != nil {
+		f.schedulerMu.RLock()
+		defer f.schedulerMu.RUnlock()
+
+		if err := f.scheduler.Start(ctx); err != nil {
+			return fmt.Errorf("failed to start scheduler: %w", err)
+		}
+	}
 
 	return nil
 }
 
 // Stop implements ShutdownModule interface and stops the Faktory worker
-func (m *Faktotum) Stop(_ context.Context) error {
-	m.mu.Lock()
-	if m.cancel != nil {
-		m.cancel()
-		m.cancel = nil // Prevent multiple cancel calls
+func (f *Faktotum) Stop(_ context.Context) error {
+	// Stop the scheduler, if configured
+	if f.scheduler != nil {
+		f.schedulerMu.RLock()
+		defer f.schedulerMu.RUnlock()
+
+		_ = f.scheduler.Stop(context.Background())
 	}
-	mgr := m.mgr // Capture under lock
-	hasPool := m.hasPool
-	m.mu.Unlock()
+
+	f.mu.Lock()
+	if f.cancel != nil {
+		f.cancel()
+		f.cancel = nil // Prevent multiple cancel calls
+	}
+	mgr := f.mgr // Capture under lock
+	hasPool := f.hasPool
+	f.mu.Unlock()
 
 	if mgr == nil {
 		return nil
@@ -186,63 +239,61 @@ func (m *Faktotum) Stop(_ context.Context) error {
 	select {
 	case <-done:
 		return nil
-	case <-time.After(m.config.ShutdownTimeout):
-		return fmt.Errorf("shutdown timed out after %v", m.config.ShutdownTimeout)
+	case <-time.After(f.config.ShutdownTimeout):
+		return fmt.Errorf("shutdown timed out after %v", f.config.ShutdownTimeout)
 	}
 }
 
 // RegisterGlobalHook adds a new hook
-func (m *Faktotum) RegisterGlobalHook(name string, hook Hook) error {
-	return m.hookRegistry.RegisterGlobalHook(name, hook)
+func (f *Faktotum) RegisterGlobalHook(name string, hook Hook) error {
+	return f.hookRegistry.RegisterGlobalHook(name, hook)
 }
 
 // RegisterJobHook adds a new hook for a specific job type
-func (m *Faktotum) RegisterJobHook(jobType, name string, hook Hook) error {
-	return m.hookRegistry.RegisterJobHook(jobType, name, hook)
+func (f *Faktotum) RegisterJobHook(jobType, name string, hook Hook) error {
+	return f.hookRegistry.RegisterJobHook(jobType, name, hook)
 }
 
 // UnregisterGlobalHook removes a global hook
-func (m *Faktotum) UnregisterGlobalHook(name string) error {
-	return m.hookRegistry.UnregisterGlobalHook(name)
+func (f *Faktotum) UnregisterGlobalHook(name string) error {
+	return f.hookRegistry.UnregisterGlobalHook(name)
 }
 
 // UnregisterJobHook removes a job-specific hook
-func (m *Faktotum) UnregisterJobHook(jobType string, name string) error {
-	return m.hookRegistry.UnregisterJobHook(jobType, name)
+func (f *Faktotum) UnregisterJobHook(jobType string, name string) error {
+	return f.hookRegistry.UnregisterJobHook(jobType, name)
 }
 
 // GetGlobalHooks returns all global hooks
-func (m *Faktotum) GetGlobalHooks() map[string]Hook {
-	return m.hookRegistry.GetGlobalHooks()
+func (f *Faktotum) GetGlobalHooks() map[string]Hook {
+	return f.hookRegistry.GetGlobalHooks()
 }
 
 // GetJobTypeHooks returns all hooks for a specific job type
-func (m *Faktotum) GetJobTypeHooks(jobType string) map[string]Hook {
-	return m.hookRegistry.GetJobTypeHooks(jobType)
+func (f *Faktotum) GetJobTypeHooks(jobType string) map[string]Hook {
+	return f.hookRegistry.GetJobTypeHooks(jobType)
 }
 
 // RegisterJob registers a job handler with hooks and panic recovery
-func (m *Faktotum) RegisterJob(jobType string, handler worker.Perform) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (f *Faktotum) RegisterJob(jobType string, handler worker.Perform) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 
 	// Log registration
-	m.logger.Info("registering job handler",
-		slog.String("job_type", jobType),
-	)
+	f.logger.Info("registering job handler", slog.String("job_type", jobType))
 
 	// First wrap with panic recovery
-	safeHandler := m.WrapWithPanicRecovery(jobType, handler)
+	safeHandler := f.WrapWithPanicRecovery(jobType, handler)
 
 	// Then wrap with hooks and logging
-	wrappedHandler := m.WrapWithHooks(jobType, safeHandler)
+	wrappedHandler := f.WrapWithHooks(jobType, safeHandler)
 
-	m.mgr.Register(jobType, wrappedHandler)
+	f.mgr.Register(jobType, wrappedHandler)
 }
 
 // EnqueueJob pushes a job to Faktory
-func (m *Faktotum) EnqueueJob(_ context.Context, job *faktory.Job) error {
-	client, err := m.clientFactory()
+func (f *Faktotum) EnqueueJob(_ context.Context, job *faktory.Job) error {
+	client, err := f.clientFactory()
 	if err != nil {
 		return fmt.Errorf("failed to get client from pool: %w", err)
 	}
@@ -262,10 +313,10 @@ type BulkEnqueueResult struct {
 }
 
 // BulkEnqueue enqueues multiple jobs in parallel
-func (m *Faktotum) BulkEnqueue(_ context.Context, jobs []*faktory.Job) []BulkEnqueueResult {
+func (f *Faktotum) BulkEnqueue(_ context.Context, jobs []*faktory.Job) []BulkEnqueueResult {
 	results := make([]BulkEnqueueResult, len(jobs))
 	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, m.config.WorkerCount)
+	semaphore := make(chan struct{}, f.config.WorkerCount)
 
 	for i, job := range jobs {
 		wg.Add(1)
@@ -281,7 +332,7 @@ func (m *Faktotum) BulkEnqueue(_ context.Context, jobs []*faktory.Job) []BulkEnq
 					}
 
 					// Log the panic with structured data
-					m.logger.Error("bulk enqueue panic detected",
+					f.logger.Error("bulk enqueue panic detected",
 						slog.String("job_id", j.Jid),
 						slog.String("job_type", j.Type),
 						slog.Any("panic_value", r),
@@ -300,13 +351,9 @@ func (m *Faktotum) BulkEnqueue(_ context.Context, jobs []*faktory.Job) []BulkEnq
 			semaphore <- struct{}{}        // Acquire
 			defer func() { <-semaphore }() // Release
 
-			client, err := m.clientFactory()
+			client, err := f.clientFactory()
 			if err != nil {
-				m.logger.Error("failed to get client from pool",
-					slog.String("job_id", j.Jid),
-					slog.String("job_type", j.Type),
-					slog.String("error", err.Error()),
-				)
+				f.logger.Error("failed to get client from pool", jobError(j.Jid, j.Type, err)...)
 				results[index] = BulkEnqueueResult{
 					Error: fmt.Errorf("failed to get client from pool: %w", err),
 				}
@@ -317,17 +364,9 @@ func (m *Faktotum) BulkEnqueue(_ context.Context, jobs []*faktory.Job) []BulkEnq
 
 			err = client.Push(j)
 			if err != nil {
-				m.logger.Error("failed to push job",
-					slog.String("job_id", j.Jid),
-					slog.String("job_type", j.Type),
-					slog.String("error", err.Error()),
-				)
+				f.logger.Error("failed to push job", jobError(j.Jid, j.Type, err)...)
 			} else {
-				m.logger.Debug("job enqueued successfully",
-					slog.String("job_id", j.Jid),
-					slog.String("job_type", j.Type),
-					slog.String("queue", j.Queue),
-				)
+				f.logger.Debug("job enqueued successfully", jobInfo(j.Jid, j.Type, slog.String("queue", j.Queue))...)
 			}
 
 			results[index] = BulkEnqueueResult{
@@ -342,19 +381,15 @@ func (m *Faktotum) BulkEnqueue(_ context.Context, jobs []*faktory.Job) []BulkEnq
 }
 
 // WrapWithHooks wraps a job handler with hook processing and logging
-func (m *Faktotum) WrapWithHooks(jobType string, handler worker.Perform) worker.Perform {
+func (f *Faktotum) WrapWithHooks(jobType string, handler worker.Perform) worker.Perform {
 	return func(ctx context.Context, args ...interface{}) error {
 		// Create a job instance for hooks and logging
 		job := faktory.NewJob(jobType, args...)
 
 		// Log job start
-		m.logger.Debug("starting job processing",
-			slog.String("job_id", job.Jid),
-			slog.String("job_type", job.Type),
-			slog.Any("args", args),
-		)
+		f.logger.Debug("starting job processing", jobInfo(job.Jid, job.Type, slog.Any("args", args))...)
 
-		hooks := m.hookRegistry.GetHooks(jobType)
+		hooks := f.hookRegistry.GetHooks(jobType)
 
 		// Run pre-job hooks
 		for _, hook := range hooks {
@@ -362,7 +397,7 @@ func (m *Faktotum) WrapWithHooks(jobType string, handler worker.Perform) worker.
 				defer func() {
 					if r := recover(); r != nil {
 						stack := debug.Stack()
-						m.logger.Error("panic in BeforeJob hook",
+						f.logger.Error("panic in BeforeJob hook",
 							slog.String("job_id", job.Jid),
 							slog.String("job_type", job.Type),
 							slog.Any("panic_value", r),
@@ -372,11 +407,7 @@ func (m *Faktotum) WrapWithHooks(jobType string, handler worker.Perform) worker.
 				}()
 				return hook.BeforeJob(ctx, job)
 			}(); err != nil {
-				m.logger.Error("BeforeJob hook failed",
-					slog.String("job_id", job.Jid),
-					slog.String("job_type", job.Type),
-					slog.String("error", err.Error()),
-				)
+				f.logger.Error("BeforeJob hook failed", jobError(job.Jid, job.Type, err)...)
 				return fmt.Errorf("hook failed: %w", err)
 			}
 		}
@@ -386,16 +417,9 @@ func (m *Faktotum) WrapWithHooks(jobType string, handler worker.Perform) worker.
 
 		// Log completion or error
 		if err != nil {
-			m.logger.Error("job failed",
-				slog.String("job_id", job.Jid),
-				slog.String("job_type", job.Type),
-				slog.String("error", err.Error()),
-			)
+			f.logger.Error("job failed", jobError(job.Jid, job.Type, err)...)
 		} else {
-			m.logger.Debug("job completed successfully",
-				slog.String("job_id", job.Jid),
-				slog.String("job_type", job.Type),
-			)
+			f.logger.Debug("job completed successfully", jobInfo(job.Jid, job.Type)...)
 		}
 
 		// Run post-job hooks
@@ -405,7 +429,7 @@ func (m *Faktotum) WrapWithHooks(jobType string, handler worker.Perform) worker.
 				defer func() {
 					if r := recover(); r != nil {
 						stack := debug.Stack()
-						m.logger.Error("panic in AfterJob hook",
+						f.logger.Error("panic in AfterJob hook",
 							slog.String("job_id", job.Jid),
 							slog.String("job_type", job.Type),
 							slog.Any("panic_value", r),
@@ -422,7 +446,7 @@ func (m *Faktotum) WrapWithHooks(jobType string, handler worker.Perform) worker.
 }
 
 // WrapWithPanicRecovery wraps a job handler with panic recovery
-func (m *Faktotum) WrapWithPanicRecovery(jobType string, handler worker.Perform) worker.Perform {
+func (f *Faktotum) WrapWithPanicRecovery(jobType string, handler worker.Perform) worker.Perform {
 	return func(ctx context.Context, args ...interface{}) (err error) {
 		defer func() {
 			if r := recover(); r != nil {
@@ -437,7 +461,7 @@ func (m *Faktotum) WrapWithPanicRecovery(jobType string, handler worker.Perform)
 				job := faktory.NewJob(jobType, args...)
 
 				// Log the panic with structured data
-				m.logger.Error("job panic detected",
+				f.logger.Error("job panic detected",
 					slog.String("job_id", job.Jid),
 					slog.String("job_type", job.Type),
 					slog.Any("panic_value", r),

@@ -62,7 +62,7 @@ func NewScheduler(f *Faktotum, cfg *SchedulerConfig) (*Scheduler, error) {
 		scheduler: scheduler,
 		faktotum:  f,
 		config:    cfg,
-		logger:    f.logger,
+		logger:    f.logger.WithGroup("scheduler"),
 		jobs:      make(map[string]uuid.UUID),
 	}, nil
 }
@@ -77,19 +77,19 @@ func (s *Scheduler) Init() error {
 	return nil
 }
 
+type Job faktory.Job
+
 // Start starts the scheduler
 func (s *Scheduler) Start(ctx context.Context) error {
-	s.logger.Info("starting scheduler")
+	s.logger.Info("starting scheduler", slog.String("name", s.config.Name))
 	s.scheduler.Start()
 
 	go func() {
 		<-ctx.Done()
 		if err := s.scheduler.Shutdown(); err != nil {
-			s.logger.Error("error shutting down scheduler",
-				slog.String("error", err.Error()),
-			)
+			s.logger.Error("error shutting down scheduler", slog.String("error", err.Error()))
 		}
-		s.logger.Info("scheduler stopped")
+		s.logger.Info("scheduler stopped", slog.String("name", s.config.Name))
 	}()
 
 	return nil
@@ -97,7 +97,8 @@ func (s *Scheduler) Start(ctx context.Context) error {
 
 // Stop stops the scheduler
 func (s *Scheduler) Stop(_ context.Context) error {
-	s.logger.Info("stopping scheduler")
+	//s.logger.Info("stopping scheduler")
+	s.logger.Info("stopping scheduler", slog.Group("faktotum.scheduler"))
 	return s.scheduler.Shutdown()
 }
 

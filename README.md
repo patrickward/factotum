@@ -253,7 +253,9 @@ func setupNewFactotum(c *mockClient, config *faktotum.Config) *faktotum.Faktotum
 
 ## Job Scheduling
 
-Faktotum includes optional job scheduling capabilities built on [go-co-op/gocron](https://github.com/go-co-op/gocron). Enable scheduling when creating your Faktotum instance:
+Faktotum includes optional periodic scheduling capabilities built on [go-co-op/gocron](https://github.com/go-co-op/gocron). 
+
+You can enable scheduling when creating your Faktotum instance using the `WithScheduler` option:
 
 ```go
 f := faktotum.New(
@@ -268,11 +270,11 @@ f := faktotum.New(
 if scheduler := f.Scheduler(); scheduler != nil {
     err := scheduler.ScheduleDaily(
         "cleanup-job",
-        faktory.NewJob("cleanup", nil),
+        faktotum.NewJob("cleanup", nil).Build(),
         1,
         gocron.NewAtTimes(gocron.NewAtTime(3, 0, 0)),
     )
 }
 ```
 
-See [SCHEDULER.md](SCHEDULER.md) for detailed documentation on scheduling patterns and options.
+See [SCHEDULER.md](SCHEDULER.md) for more documentation on scheduling patterns and options.
